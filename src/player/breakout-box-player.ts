@@ -24,6 +24,8 @@ export default class MSEPlayer {
   private videoTrackGeneratorWriter: WritableStreamDefaultWriter | null = null;
   private audioTrackGeneratorWriter: WritableStreamDefaultWriter | null = null;
 
+  private duration: number = 0;
+
   private initData: Map<number, InitData[]> = new Map<number, InitData[]>();
   private baseTime: number | null = null;
   private baseTimeSyncType: 'vide' | 'soun';
@@ -53,6 +55,8 @@ export default class MSEPlayer {
     }
 
     this.buffering.start();
+
+    this.duration = 0;
 
     this.emitter.on(EventTypes.INIT_SEGMENT_RECIEVED, this.onInitSegmentRecievedHandler);
     this.emitter.on(EventTypes.FRAGMENT_RECIEVED, this.onFragmentRecievedHandler);
@@ -95,16 +99,17 @@ export default class MSEPlayer {
     const initData = this.initData.get(payload.adaptation_id);
     if (!initData) { return; }
 
+    const fragmentData = getFragmentData(payload.fragment, initData)[0];
+    if (!fragmentData) { return; }
+
     if (this.baseTime == null) {
-      const baseTimes = getBaseTime(payload.fragment, initData);
-      const base = initData.find((init) => init.handler_type === this.baseTimeSyncType);
-      const baseTime = baseTimes.find((entry) => base != null && entry.track_id === base.track_id);
-      this.baseTime = baseTime?.base_media_decode_time ?? null;
+      for (const { base_media_decode_time, track } of fragmentData) {
+        if (track.handler_type !== this.baseTimeSyncType) { continue; }
+        this.baseTime = base_media_decode_time - this.duration;
+      }
     }
     if (this.baseTime == null) { return; }
 
-    const fragmentData = getFragmentData(payload.fragment, initData)[0];
-    if (!fragmentData) { return; }
     fragmentData.sort((frag1, frag2) => {
       if (frag1.data_offset == null && frag2.data_offset == null) { return 0; }
       if (frag1.data_offset != null && frag2.data_offset == null) { return 1; }
@@ -116,6 +121,9 @@ export default class MSEPlayer {
       if (this.baseTime == null) { return; }
 
       const { track, duration, base_media_decode_time } = frag;
+      if (track.handler_type === this.baseTimeSyncType) {
+        this.duration += duration;
+      }
 
       const mdat = findBox('mdat', payload.fragment)[0];
       if (!mdat) { return; }
@@ -166,6 +174,10 @@ export default class MSEPlayer {
   }
 
   private clean(): void {
+    this.initData.clear();
+    this.duration = 0;
+    this.baseTime = null;
+
     this.emitter.off(EventTypes.INIT_SEGMENT_RECIEVED, this.onInitSegmentRecievedHandler);
     this.emitter.off(EventTypes.FRAGMENT_RECIEVED, this.onFragmentRecievedHandler);
     this.emitter.off(EventTypes.VIDEO_FRAME_DECODED, this.onVideoFrameDecodedHandler);

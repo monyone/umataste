@@ -1,4 +1,4 @@
-import { adjustBaseTime, getBaseTime } from '../demux/fragment/index';
+import { adjustBaseTime, getBaseTime, getFragmentData } from '../demux/fragment/index';
 import { InitData, parseInitData } from '../demux/init/index';
 import EventEmitter from '../event/eventemitter';
 import { Events, EventTypes } from '../event/events';
@@ -42,9 +42,12 @@ export default class MSEPlayer {
   private mediaSource: MediaSource | null = null;
   private mediaSourceUrl: string | null = null;
 
+  private duration: number = 0;
+
   private sourceBufferQueue: Map<number, SourceBufferQueue> = new Map<number, SourceBufferQueue>();
   private initData: Map<number, InitData[]> = new Map<number, InitData[]>();
   private baseTime: number | null = null;
+  private baseTimeSyncType: 'vide' | 'soun';
 
   private readonly onInitSegmentRecievedHandler = this.onInitSegmentRecieved.bind(this);
   private readonly onFragmentRecievedHandler = this.onFragmentRecieved.bind(this);
@@ -52,6 +55,7 @@ export default class MSEPlayer {
   public constructor(option?: PlayerOption) {
     this.source = option?.source ?? new HTTPStreamingWindowSource();
     this.source.setEmitter(this.emitter);
+    this.baseTimeSyncType = option?.baseTimeSyncType ?? 'vide';
   }
 
   public async load(url: string): Promise<boolean> {
@@ -65,6 +69,7 @@ export default class MSEPlayer {
     this.mediaSource = new MediaSource();
     this.mediaSourceUrl = URL.createObjectURL(this.mediaSource);
     this.attachMedia(this.media);
+    this.duration = 0;
 
     this.emitter.on(EventTypes.INIT_SEGMENT_RECIEVED, this.onInitSegmentRecievedHandler);
     this.emitter.on(EventTypes.FRAGMENT_RECIEVED, this.onFragmentRecievedHandler);
@@ -88,6 +93,9 @@ export default class MSEPlayer {
     if (this.mediaSource.readyState !== 'open') { return; }
 
     const initData = parseInitData(payload.init);
+    if (this.initData.has(payload.adaptation_id)) {
+      this.baseTime = null;
+    }
     this.initData.set(payload.adaptation_id, initData);
 
     const sourceBuffer = this.mediaSource.addSourceBuffer(`video/mp4; codecs="${initData.map(init => init.codec.identifier).join(',')}"`);
@@ -104,14 +112,22 @@ export default class MSEPlayer {
     const initData = this.initData.get(payload.adaptation_id);
     if (!initData) { return; }
 
-    if (this.baseTime == null) {
-      const baseTimes = getBaseTime(payload.fragment, initData);
-      const video = initData.find((init) => init.handler_type === 'vide')
-      const baseTime = baseTimes.find((entry) => video != null && entry.track_id === video.track_id);
+    const fragmentData = getFragmentData(payload.fragment, initData);
 
-      this.baseTime = baseTime?.base_media_decode_time ?? null;
+    if (this.baseTime == null) {
+      for (const { base_media_decode_time, track } of (fragmentData[0] ?? [])) {
+        if (track.handler_type !== this.baseTimeSyncType) { continue; }
+        this.baseTime = base_media_decode_time - this.duration;
+      }
     }
     if (this.baseTime == null) { return; }
+
+    fragmentData.forEach((frag) => {
+      for (const { duration, track } of frag) {
+        if (track.handler_type !== this.baseTimeSyncType) { continue; }
+        this.duration += duration;
+      }
+    })
 
     adjustBaseTime(payload.fragment, initData, this.baseTime);
     sourceBufferQueue.push(payload.fragment);
@@ -128,7 +144,10 @@ export default class MSEPlayer {
     this.mediaSource = null;
     if (this.mediaSourceUrl) { URL.revokeObjectURL(this.mediaSourceUrl); }
     this.mediaSourceUrl = null;
-    this.sourceBufferQueue = new Map<number, SourceBufferQueue>();
+    this.sourceBufferQueue.clear();
+    this.initData.clear();
+    this.duration = 0;
+    this.baseTime = null;
 
     this.emitter.off(EventTypes.INIT_SEGMENT_RECIEVED, this.onInitSegmentRecievedHandler);
     this.emitter.off(EventTypes.FRAGMENT_RECIEVED, this.onFragmentRecievedHandler);
