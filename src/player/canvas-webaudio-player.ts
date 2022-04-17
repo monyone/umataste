@@ -158,6 +158,7 @@ export default class MSEPlayer {
 
   private abort(): void {
     this.source.abort();
+    this.buffering.abort();
   }
 
   private clean(): void {
