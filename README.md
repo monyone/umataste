@@ -1,4 +1,4 @@
-# umtaste
+# umtaste [![npm](https://img.shields.io/npm/v/umataste.svg?style=flat)](https://www.npmjs.com/package/umataste)
 
 HTML5 fmp4 live stream (ll-fmp4) player written in TypeScript
 
