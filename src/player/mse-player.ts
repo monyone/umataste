@@ -60,26 +60,35 @@ export default class MSEPlayer {
 
   public async load(url: string): Promise<boolean> {
     this.stop();
-    if (!this.media) { return false; }
-
-    if (!(await this.source.load(url))) {
+    if (!this.media) {
       return false;
     }
 
     this.mediaSource = new MediaSource();
     this.mediaSourceUrl = URL.createObjectURL(this.mediaSource);
     this.attachMedia(this.media);
-    this.duration = 0;
 
+    const isOpened = await new Promise((resolve) => {
+      if (this.mediaSource == null) { return resolve(false); }
+      this.mediaSource.addEventListener('sourceopen', () => {
+        return resolve(true);
+      })
+    })
+    if (!isOpened) {
+      this.stop();
+      return false;
+    }
+
+    if (!(await this.source.load(url))) {
+      this.stop();
+      return false;
+    }
+
+    this.duration = 0;
     this.emitter.on(EventTypes.INIT_SEGMENT_RECIEVED, this.onInitSegmentRecievedHandler);
     this.emitter.on(EventTypes.FRAGMENT_RECIEVED, this.onFragmentRecievedHandler);
 
-    return new Promise((resolve) => {
-      if (!this.mediaSource) { return resolve(false); }
-      this.mediaSource?.addEventListener('sourceopen', () => {
-        resolve(true);
-      })
-    });
+    return true;
   }
   
   public attachMedia(media: HTMLMediaElement): void {

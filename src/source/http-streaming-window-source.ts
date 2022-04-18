@@ -5,7 +5,7 @@ import { EventTypes } from '../event/events'
 import Source from "./source";
 
 
-export default class HTTPStreamingWindowSource extends Source{  
+export default class HTTPStreamingWindowSource extends Source {
   private fetchReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private abortController: AbortController | null = null;
 
@@ -13,7 +13,7 @@ export default class HTTPStreamingWindowSource extends Source{
 
   private boxQueue: BoxQueue = new BoxQueue();
   private init: Uint8Array[] = [];
-  private sidx: ArrayBuffer[] = [];
+  private emsg: ArrayBuffer[] = [];
   private moof: Uint8Array | null = null;
 
   public constructor() {
@@ -83,19 +83,19 @@ export default class HTTPStreamingWindowSource extends Source{
         const box = parseBox(data.buffer);
 
         if (this.moof) {
-          if (box.type === 'sidx') {
-            this.sidx.push(data.buffer);
+          if (box.type === 'emsg') {
+            this.emsg.push(data.buffer);
           } else if (box.type === 'mdat') {
             const fragment = (Uint8Array.from([... this.moof, ... data]));
 
             this.emitter?.emit(EventTypes.FRAGMENT_RECIEVED, {
               event: EventTypes.FRAGMENT_RECIEVED,
               adaptation_id: 0,
-              sidx: this.sidx,
+              emsg: this.emsg,
               fragment: fragment.buffer
             });
 
-            this.sidx = [];
+            this.emsg = [];
             this.moof = null;
           }
         } else if(box.type === 'moof') {
@@ -118,8 +118,10 @@ export default class HTTPStreamingWindowSource extends Source{
           }
 
           this.moof = data;
-        } else if (box.type === 'sidx') {
-          this.sidx.push(data.buffer);
+        } else if (box.type === 'emsg') {
+          this.emsg.push(data.buffer);
+        } else if (box.type === 'sidx' || box.type === 'styp' || box.type === 'prft') {
+          // pass
         } else {
           this.init.push(data);
         }

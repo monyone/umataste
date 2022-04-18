@@ -26,7 +26,7 @@ export type INIT_SEGMENT_RECIEVED_PAYLOAD = {
 export type FRAGMENT_RECIEVED_PAYLOAD = {
   event: typeof EventTypes.FRAGMENT_RECIEVED;
   adaptation_id: number,
-  sidx: ArrayBuffer[],
+  emsg: ArrayBuffer[],
   fragment: ArrayBuffer
 }
 
