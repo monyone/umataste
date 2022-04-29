@@ -10,6 +10,11 @@ type TickBasedThrottlingOptions = {
   tickHz?: number
 };
 
+type soundBuffer = {
+  timestamp: number,
+  duration: number
+};
+
 export default class TickBasedThrottling extends BufferingStrategy{
   private emitter: EventEmitter | null = null;
   private options: Required<TickBasedThrottlingOptions>;
@@ -21,11 +26,11 @@ export default class TickBasedThrottling extends BufferingStrategy{
 
   private h264Queue: Events[typeof EventTypes.H264_PARSED][] = [];
 
-  private soundBufferingTime: number = 0;
-  private soundStalledTime: number = 0;
+  private buffer: soundBuffer[] = [];
 
   private startTimestamp: number = 0;
   private lastTimestamp : number | null = null;
+  private audioTimestamp: number | null = null;
 
   static isSupported () {
     return true;
@@ -60,6 +65,7 @@ export default class TickBasedThrottling extends BufferingStrategy{
       time: 1000 / this.options.tickHz
     } as TickerEvents[typeof TickerEventTypes.TICKER_START]);
     this.startTimestamp = performance.now();
+    this.audioTimestamp = null;
   }
 
   public abort() {
@@ -83,7 +89,10 @@ export default class TickBasedThrottling extends BufferingStrategy{
       ... payload,
       event: EventTypes.AAC_EMITTED
     });
-    this.soundBufferingTime += payload.duration;
+    this.buffer.push({
+      timestamp: payload.timestamp,
+      duration: payload.duration
+    });
     this.onTick();
   }
   
@@ -98,19 +107,28 @@ export default class TickBasedThrottling extends BufferingStrategy{
     const now = performance.now();
 
     if (this.lastTimestamp != null) {
-      const elapse = (now - this.lastTimestamp) / 1000;
-      const buffer = this.soundBufferingTime;
+      let elapse = (now - this.lastTimestamp) / 1000;
 
-      if (buffer >= elapse) {
-        this.soundBufferingTime -= elapse;
-      } else {
-        this.soundBufferingTime = 0;
-        this.soundStalledTime += (elapse - buffer);
+      while (this.buffer.length > 0) {
+        const buffer = this.buffer[0];
+        const min = Math.min(elapse, buffer.duration)
+
+        buffer.timestamp += min;
+        buffer.duration -= min;
+        elapse -= min;
+
+        this.audioTimestamp = buffer.timestamp;
+
+        if (buffer.duration <= 0) { this.buffer.shift(); }
+        if (elapse <= 0) { break; }
       }
+
+      // if elapse > 0, so stalled audio
     }
     this.lastTimestamp = now;
 
-    const elapsedTime = ((now - this.startTimestamp) / 1000) - (this.options.audioBasedLipsync ? this.soundStalledTime : 0);
+    const elapsedTime = this.options.audioBasedLipsync ? this.audioTimestamp : ((now - this.startTimestamp) / 1000);
+    if (elapsedTime == null) { return; }
 
     let h264Emitted = false;
     this.h264Queue = this.h264Queue.filter((h264) => {
