@@ -4,7 +4,7 @@ export { default as EventEmitter } from './event/eventemitter'
 export { default as Source } from './source/source'
 export { default as HTTPStreamingWindowSource } from './source/http-streaming-window-source'
 export { default as WebSocketStreamingWindowSource } from './source/websocket-streaming-window-source'
-export { default as ExperimentalWarpWindowSource } from './source/experimental-warp-window-source'
+export { default as WarpWindowSource } from './source/warp-window-source'
 
 export { default as Decoder } from './decoder/decoder'
 export { default as WindowDecoder } from './decoder/window-decoder'
