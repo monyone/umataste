@@ -56,4 +56,9 @@ export class BitStream {
   public readBool() {
     return this.readBits(1) === 1;
   }
+
+  public byteAlign() {
+    this.skipBits(this.bitLength() % 8);
+    return;
+  }
 }

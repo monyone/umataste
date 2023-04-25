@@ -20,7 +20,7 @@ export const parseTfdt = (arraybuffer: ArrayBuffer, tfdt: Box): Tfdt => {
       base_media_decode_time,
     };
   } else {
-    const base_media_decode_time = (view.getUint32(4) * (2 ** 32)) | view.getUint32(8);
+    const base_media_decode_time = (view.getUint32(4) * (2 ** 32)) + view.getUint32(8);
 
     return {
       version,

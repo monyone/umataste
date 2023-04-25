@@ -13,7 +13,7 @@ class SourceBufferQueue {
 
   public constructor(sourceBuffer: SourceBuffer) {
     this.sourceBuffer = sourceBuffer;
-    this.sourceBuffer.addEventListener('updateend', this.onUpdateEndHandler); 
+    this.sourceBuffer.addEventListener('updateend', this.onUpdateEndHandler);
   }
 
   private onUpdateEnd() {
@@ -34,7 +34,7 @@ class SourceBufferQueue {
   }
 }
 
-export default class MSEPlayer {  
+export default class MSEPlayer {
   private emitter: EventEmitter = new EventEmitter();
 
   private source: Source;
@@ -51,7 +51,7 @@ export default class MSEPlayer {
 
   private readonly onInitSegmentRecievedHandler = this.onInitSegmentRecieved.bind(this);
   private readonly onFragmentRecievedHandler = this.onFragmentRecieved.bind(this);
-  
+
   public constructor(option?: PlayerOption) {
     this.source = option?.source ?? new HTTPStreamingWindowSource();
     this.source.setEmitter(this.emitter);
@@ -90,7 +90,7 @@ export default class MSEPlayer {
 
     return true;
   }
-  
+
   public attachMedia(media: HTMLMediaElement): void {
     this.unload();
     this.media = media;
