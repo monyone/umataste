@@ -352,6 +352,7 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
 
   private mp4a_packet_id: number | null = null;
   private mp4a_timestamps: Map<number, [number, number, [number, number][]]> = new Map<number, [number, number, [number, number][]]>();
+  private mp4a_au_counts: Map<number, number> = new Map<number, number>();
   private mp4a_config: ArrayBuffer | null = null;
 
   public constructor() {
@@ -608,7 +609,6 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     // TODO: NEED IMPL
   }
 
-  private prev_dts: number | null = null;
   private parseMMTMPUMp4aMFU(data: ArrayBuffer, sequence_number: number, begin: number, end: number) {
     // TODO: NEED IMPL
     if (!this.mp4a_timestamps.has(sequence_number)) { return; }
@@ -634,20 +634,31 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     }
 
     const [mpu_presentation_time, mpu_decoding_time_offset, offsets] = this.mp4a_timestamps.get(sequence_number)!;
-    this.mp4a_timestamps.delete(sequence_number);
-    const dts = mpu_presentation_time + mpu_decoding_time_offset;
-    if (this.prev_dts != null) {
-      console.log((dts - this.prev_dts) / 90000 / (1024 / sampling_frequency))
-    }
-    this.prev_dts = dts;
+    const current_au = this.mp4a_au_counts.get(sequence_number) ?? 0;
+    let dts = mpu_presentation_time + mpu_decoding_time_offset;
+    let cts = 0;
     let duration = 0;
-    for (const [dts_pts_offset, pts_offset] of offsets) { duration += pts_offset; }
+    for (let i = 0; i <= current_au; i++) {
+      const [dts_pts_offset, pts_offset] = offsets[i];
+      cts = dts_pts_offset;
+      duration = pts_offset;
+      if (i < current_au) { dts += pts_offset; }
+    }
     this.emitter?.emit(EventTypes.FRAGMENT_RECIEVED, {
       event: EventTypes.FRAGMENT_RECIEVED,
       adaptation_id: this.mp4a_packet_id!,
       emsg: [],
-      fragment: concat(moof([1, duration, dts, 0, [[duration, raw.byteLength, false, 0]]]), mdat(raw))
+      fragment: concat(moof([1, duration, dts, 0, [[duration, raw.byteLength, false, cts]]]), mdat(raw))
     });
+
+
+    if (current_au + 1 >= offsets.length) {
+      this.mp4a_timestamps.delete(sequence_number);
+      this.mp4a_au_counts.delete(sequence_number);
+    } else {
+      this.mp4a_au_counts.set(sequence_number, current_au + 1);
+    }
+
     /*
     for (const [dts_pts_offset, pts_offset] of offsets) {
       const pts = dts + dts_pts_offset;

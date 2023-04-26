@@ -18,6 +18,7 @@ class SourceBufferQueue {
 
   private onUpdateEnd() {
     if (this.queue.length === 0) { return; }
+    if (this.sourceBuffer.updating) { return; }
     this.sourceBuffer.appendBuffer(this.queue.shift()!);
   }
 
