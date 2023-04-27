@@ -14,6 +14,14 @@ export type AVCCodec = {
   }
 };
 
+export type HEVCCodec = {
+  name: 'hvc1'
+  identifier: string,
+  description: ArrayBuffer,
+  hvcC: {
+  }
+};
+
 export type MP4ACodec = {
   name: 'mp4a',
   identifier: string,
@@ -40,7 +48,7 @@ const samplingFrequencyIndexMap = new Map<number, number>([
   [0x0c, 7350],
 ]);
 
-export type Codec = AVCCodec | MP4ACodec | {
+export type Codec = AVCCodec | HEVCCodec | MP4ACodec | {
   name: string,
   identifier: string,
   description: ArrayBuffer
@@ -95,9 +103,9 @@ export const parseStsd = (arraybuffer: ArrayBuffer, stsd: Box): Stsd => {
         };
       }
       const view = new DataView(arraybuffer, avcC.begin, (avcC.end - avcC.begin));
-      const configuration_version = view.getUint8(0);  
-      const avc_profile_indication = view.getUint8(1); 
-      const profile_compatibility = view.getUint8(2);  
+      const configuration_version = view.getUint8(0);
+      const avc_profile_indication = view.getUint8(1);
+      const profile_compatibility = view.getUint8(2);
       const avc_level_indication = view.getUint8(3);
       const nalu_length_size = (view.getUint8(4) & 3) + 1;
 
@@ -112,6 +120,25 @@ export const parseStsd = (arraybuffer: ArrayBuffer, stsd: Box): Stsd => {
           avc_level_indication,
           nalu_length_size
         }
+      };
+    } else if (box.type === 'hvc1') {
+      const hvcC = findBox('hvcC', arraybuffer, box.begin + 8 + 70, box.end)[0];
+      if (!hvcC) {
+        return {
+          name: box.type,
+          identifier: box.type,
+          description: new ArrayBuffer(0)
+        };
+      }
+      const view = new DataView(arraybuffer, hvcC.begin, (hvcC.end - hvcC.begin));
+      const general_profile_idc = (view.getUint8(1) & 0x1F) >> 0;
+      const general_level_idc = view.getUint8(12)
+
+      return {
+        name: box.type,
+        identifier: `${box.type}.${general_profile_idc}.1.L${general_level_idc}.B0`,
+        description: arraybuffer.slice(hvcC.begin, hvcC.end),
+        hvcC: {}
       };
     } else if (box.type === 'mp4a') {
       const esds = findBox('esds', arraybuffer, box.begin + 8 + 20, box.end)[0];

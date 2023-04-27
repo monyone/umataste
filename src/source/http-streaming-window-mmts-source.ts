@@ -209,6 +209,22 @@ const stsd = (specific: ArrayBuffer): ArrayBuffer => {
     specific
   );
 }
+const hvc1 = (config: ArrayBuffer, width: number, height: number): ArrayBuffer => {
+  return box('hvc1',
+    uint32(0),
+    uint16(0), uint16(1),
+    uint16(0), uint16(0),
+    uint32(0), uint32(0), uint32(0),
+    uint16(width), uint16(height),
+    uint16(0x48), uint16(0),
+    uint16(0x48), uint16(0),
+    uint32(0),
+    uint16(1),
+    uint32(0), uint32(0), uint32(0), uint32(0), uint32(0), uint32(0), uint32(0), uint32(0),
+    uint16(0x18), uint16(0xFFFF),
+    box('hvcC', config)
+  )
+}
 const mp4a = (config: ArrayBuffer, channel_count: number, sample_rate: number): ArrayBuffer => {
   return box('mp4a',
     uint32(0),
@@ -255,6 +271,529 @@ const trex = (trackId: number): ArrayBuffer => {
   );
 }
 
+const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: ArrayBuffer): ArrayBuffer => {
+  const ebsp2rbsp = (data: ArrayBuffer): ArrayBuffer => {
+    const ebsp = new Uint8Array(data);
+    const rbsp = [ebsp[0], ebsp[1]];
+    for (let i = 2; i < ebsp.byteLength; i++) {
+      if (i < ebsp.byteLength - 1 && ebsp[i - 2] === 0x00 && ebsp[i - 1] === 0x00 && ebsp[i - 0] === 0x03 && (0x00 <= ebsp[i + 1] && ebsp[i + 1] <= 0x03)) {
+        continue;
+      }
+      rbsp.push(ebsp[i])
+    }
+    return (new Uint8Array(rbsp)).buffer;
+  }
+
+  const parseVPS = (data: ArrayBuffer)  => {
+    const rbsp = ebsp2rbsp(data);
+    const stream = new BitStream(rbsp);
+    stream.readBits(16);
+
+    // VPS
+    const video_parameter_set_id = stream.readBits(4);
+    stream.readBits(2);
+    const max_layers_minus1 = stream.readBits(6);
+    const max_sub_layers_minus1 = stream.readBits(3);
+    const temporal_id_nesting_flag = stream.readBool();
+    // and more ...
+
+    return {
+      num_temporal_layers: max_sub_layers_minus1 + 1,
+      temporal_id_nesting_flag,
+    }
+  }
+
+  const parseSPS = (data: ArrayBuffer)  => {
+    const rbsp = ebsp2rbsp(data);
+    const stream = new BitStream(rbsp);
+    stream.readBits(16);
+
+    let left_offset = 0, right_offset = 0, top_offset = 0, bottom_offset = 0;
+
+    // SPS
+    const video_paramter_set_id = stream.readBits(4);
+    const max_sub_layers_minus1 = stream.readBits(3);
+    const temporal_id_nesting_flag = stream.readBool();
+
+    // profile_tier_level begin
+    const general_profile_space = stream.readBits(2);
+    const general_tier_flag = stream.readBool();
+    const general_profile_idc = stream.readBits(5);
+    const general_profile_compatibility_flags_1 = stream.readBits(8);
+    const general_profile_compatibility_flags_2 = stream.readBits(8);
+    const general_profile_compatibility_flags_3 = stream.readBits(8);
+    const general_profile_compatibility_flags_4 = stream.readBits(8);
+    const general_constraint_indicator_flags_1 = stream.readBits(8);
+    const general_constraint_indicator_flags_2 = stream.readBits(8);
+    const general_constraint_indicator_flags_3 = stream.readBits(8);
+    const general_constraint_indicator_flags_4 = stream.readBits(8);
+    const general_constraint_indicator_flags_5 = stream.readBits(8);
+    const general_constraint_indicator_flags_6 = stream.readBits(8);
+    const general_level_idc = stream.readBits(8);
+    const sub_layer_profile_present_flag = [];
+    const sub_layer_level_present_flag = [];
+    for (let i = 0; i < max_sub_layers_minus1; i++) {
+      sub_layer_profile_present_flag.push(stream.readBool());
+      sub_layer_level_present_flag.push(stream.readBool());
+    }
+    if (max_sub_layers_minus1 > 0) {
+      for (let i = max_sub_layers_minus1; i < 8; i++) { stream.readBits(2); }
+    }
+    for (let i = 0; i < max_sub_layers_minus1; i++) {
+      if (sub_layer_profile_present_flag[i]) {
+        stream.readBits(8); // sub_layer_profile_space, sub_layer_tier_flag, sub_layer_profile_idc
+        stream.readBits(8); stream.readBits(8); stream.readBits(8); stream.readBits(8); // sub_layer_profile_compatibility_flag
+        stream.readBits(8); stream.readBits(8); stream.readBits(8); stream.readBits(8); stream.readBits(8); stream.readBits(8);
+      }
+      if (sub_layer_level_present_flag[i]) {
+        stream.readBits(8);
+      }
+    }
+    // profile_tier_level end
+
+    const seq_parameter_set_id = stream.readUEG();
+    const chroma_format_idc = stream.readUEG();
+    if (chroma_format_idc == 3) {
+      stream.readBits(1);  // separate_colour_plane_flag
+    }
+    const pic_width_in_luma_samples = stream.readUEG();
+    const pic_height_in_luma_samples = stream.readUEG();
+    const conformance_window_flag = stream.readBool();
+    if (conformance_window_flag) {
+        left_offset += stream.readUEG();
+        right_offset += stream.readUEG();
+        top_offset += stream.readUEG();
+        bottom_offset += stream.readUEG();
+    }
+    const bit_depth_luma_minus8 = stream.readUEG();
+    const bit_depth_chroma_minus8 = stream.readUEG();
+    const log2_max_pic_order_cnt_lsb_minus4 = stream.readUEG();
+    const sub_layer_ordering_info_present_flag = stream.readBool();
+    for (let i = sub_layer_ordering_info_present_flag ? 0 : max_sub_layers_minus1; i <= max_sub_layers_minus1; i++) {
+      stream.readUEG(); // max_dec_pic_buffering_minus1[i]
+      stream.readUEG(); // max_num_reorder_pics[i]
+      stream.readUEG(); // max_latency_increase_plus1[i]
+    }
+    const log2_min_luma_coding_block_size_minus3 = stream.readUEG();
+    const log2_diff_max_min_luma_coding_block_size = stream.readUEG();
+    const log2_min_transform_block_size_minus2 = stream.readUEG();
+    const log2_diff_max_min_transform_block_size = stream.readUEG();
+    const max_transform_hierarchy_depth_inter = stream.readUEG();
+    const max_transform_hierarchy_depth_intra = stream.readUEG();
+    const scaling_list_enabled_flag = stream.readBool();
+    if (scaling_list_enabled_flag) {
+      const sps_scaling_list_data_present_flag = stream.readBool();
+      if (sps_scaling_list_data_present_flag) {
+        for (let sizeId = 0; sizeId < 4; sizeId++) {
+          for(let matrixId = 0; matrixId < ((sizeId === 3) ? 2 : 6); matrixId++){
+            const scaling_list_pred_mode_flag = stream.readBool();
+            if (!scaling_list_pred_mode_flag) {
+              stream.readUEG(); // scaling_list_pred_matrix_id_delta
+            } else {
+              const coefNum = Math.min(64, (1 << (4 + (sizeId << 1))));
+              if (sizeId > 1) { stream.readSEG() }
+              for (let i = 0; i < coefNum; i++) { stream.readSEG(); }
+            }
+          }
+        }
+      }
+    }
+    const amp_enabled_flag = stream.readBool();
+    const sample_adaptive_offset_enabled_flag = stream.readBool();
+    const pcm_enabled_flag = stream.readBool();
+    if (pcm_enabled_flag) {
+        stream.readBits(8);
+        stream.readUEG();
+        stream.readUEG();
+        stream.readBool();
+    }
+    const num_short_term_ref_pic_sets = stream.readUEG();
+    let num_delta_pocs = 0;
+    for (let i = 0; i < num_short_term_ref_pic_sets; i++) {
+      let inter_ref_pic_set_prediction_flag = false;
+      if (i !== 0) { inter_ref_pic_set_prediction_flag = stream.readBool(); }
+      if (inter_ref_pic_set_prediction_flag) {
+        if (i === num_short_term_ref_pic_sets) { stream.readUEG(); }
+        stream.readBool();
+        stream.readUEG();
+        let next_num_delta_pocs = 0;
+        for (let j = 0; j <= num_delta_pocs; j++) {
+          const used_by_curr_pic_flag = stream.readBool();
+          let use_delta_flag = false;
+          if (!used_by_curr_pic_flag) {
+            use_delta_flag = stream.readBool();
+          }
+          if (used_by_curr_pic_flag || use_delta_flag) {
+            next_num_delta_pocs++;
+          }
+        }
+        num_delta_pocs = next_num_delta_pocs;
+      } else {
+        let num_negative_pics = stream.readUEG();
+        let num_positive_pics = stream.readUEG();
+        num_delta_pocs = num_negative_pics + num_positive_pics;
+        for (let j = 0; j < num_negative_pics; j++) {
+          stream.readUEG();
+          stream.readBool();
+        }
+        for (let j = 0; j < num_positive_pics; j++) {
+          stream.readUEG();
+          stream.readBool();
+        }
+      }
+    }
+    const long_term_ref_pics_present_flag = stream.readBool();
+    if (long_term_ref_pics_present_flag) {
+      const num_long_term_ref_pics_sps = stream.readUEG();
+      for (let i = 0; i < num_long_term_ref_pics_sps; i++) {
+        for (let j = 0; j < (log2_max_pic_order_cnt_lsb_minus4 + 4); j++) { stream.readBits(1); }
+        stream.readBits(1);
+      }
+    }
+    //*
+    let default_display_window_flag = false; // for calc offset
+    let min_spatial_segmentation_idc = 0; // for hvcC
+    let sar_width = 1, sar_height = 1;
+    let fps_fixed = false, fps_den = 1, fps_num = 1;
+    //*/
+    const sps_temporal_mvp_enabled_flag = stream.readBool();
+    const strong_intra_smoothing_enabled_flag = stream.readBool();
+    const vui_parameters_present_flag = stream.readBool();
+    if (vui_parameters_present_flag) {
+      const aspect_ratio_info_present_flag = stream.readBool();
+      if (aspect_ratio_info_present_flag) {
+        const aspect_ratio_idc = stream.readBits(8);
+
+        const sar_w_table = [1, 12, 10, 16, 40, 24, 20, 32, 80, 18, 15, 64, 160, 4, 3, 2];
+        const sar_h_table = [1, 11, 11, 11, 33, 11, 11, 11, 33, 11, 11, 33,  99, 3, 2, 1];
+
+        if (aspect_ratio_idc > 0 && aspect_ratio_idc <= 16) {
+          sar_width = sar_w_table[aspect_ratio_idc - 1];
+          sar_height = sar_h_table[aspect_ratio_idc - 1];
+        } else if (aspect_ratio_idc === 255) {
+          sar_width = stream.readBits(16);
+          sar_height = stream.readBits(16);
+        }
+      }
+      const overscan_info_present_flag = stream.readBool();
+      if (overscan_info_present_flag) {
+        stream.readBool();
+      }
+      const video_signal_type_present_flag = stream.readBool();
+      if (video_signal_type_present_flag) {
+        stream.readBits(3);
+        stream.readBool();
+        const colour_description_present_flag = stream.readBool();
+        if (colour_description_present_flag) {
+          stream.readBits(8);
+          stream.readBits(8);
+          stream.readBits(8);
+        }
+      }
+      const chroma_loc_info_present_flag = stream.readBool();
+      if (chroma_loc_info_present_flag) {
+        stream.readUEG();
+        stream.readUEG();
+      }
+      const neutral_chroma_indication_flag = stream.readBool();
+      const field_seq_flag = stream.readBool();
+      const frame_field_info_present_flag = stream.readBool();
+      default_display_window_flag = stream.readBool();
+      if (default_display_window_flag) {
+        stream.readUEG();
+        stream.readUEG();
+        stream.readUEG();
+        stream.readUEG();
+      }
+      const vui_timing_info_present_flag = stream.readBool();
+      if (vui_timing_info_present_flag) {
+        fps_den = stream.readBits(32);
+        fps_num = stream.readBits(32);
+        const vui_poc_proportional_to_timing_flag = stream.readBool();
+        if (vui_poc_proportional_to_timing_flag) {
+          stream.readUEG();
+        }
+        const vui_hrd_parameters_present_flag = stream.readBool();
+        if (vui_hrd_parameters_present_flag) {
+          let commonInfPresentFlag = 1;
+          let nal_hrd_parameters_present_flag = false;
+          let vcl_hrd_parameters_present_flag = false;
+          let sub_pic_hrd_params_present_flag = false;
+          if (commonInfPresentFlag) {
+            nal_hrd_parameters_present_flag = stream.readBool();
+            vcl_hrd_parameters_present_flag = stream.readBool();
+            if( nal_hrd_parameters_present_flag || vcl_hrd_parameters_present_flag ){
+              sub_pic_hrd_params_present_flag = stream.readBool();
+              if (sub_pic_hrd_params_present_flag) {
+                stream.readBits(8);
+                stream.readBits(5);
+                stream.readBool();
+                stream.readBits(5);
+              }
+              const bit_rate_scale = stream.readBits(4);
+              const cpb_size_scale = stream.readBits(4);
+              if (sub_pic_hrd_params_present_flag) {
+                stream.readBits(4);
+              }
+              stream.readBits(5);
+              stream.readBits(5);
+              stream.readBits(5);
+            }
+          }
+          for (let i = 0; i <= max_sub_layers_minus1; i++) {
+            let fixed_pic_rate_general_flag = stream.readBool();
+            fps_fixed = fixed_pic_rate_general_flag;
+            let fixed_pic_rate_within_cvs_flag = false;
+            let cpbCnt = 1;
+            if (!fixed_pic_rate_general_flag) {
+              fixed_pic_rate_within_cvs_flag = stream.readBool();
+            }
+            let low_delay_hrd_flag = false;
+            if (fixed_pic_rate_within_cvs_flag) {
+              stream.readSEG();
+            } else {
+              low_delay_hrd_flag = stream.readBool();
+            }
+            if (!low_delay_hrd_flag) {
+              cpbCnt = stream.readUEG() + 1;
+            }
+            // TODO: cpbCnt buggy
+            /*
+            if (nal_hrd_parameters_present_flag) {
+              for (let j = 0; j < cpbCnt; j++) {
+                stream.readUEG(); stream.readUEG();
+                if (sub_pic_hrd_params_present_flag) {
+                  stream.readUEG(); stream.readUEG();
+                }
+              }
+            }
+            if (vcl_hrd_parameters_present_flag) {
+              for (let j = 0; j < cpbCnt; j++) {
+                stream.readUEG(); stream.readUEG();
+                if (sub_pic_hrd_params_present_flag) {
+                  stream.readUEG(); stream.readUEG();
+                }
+              }
+            }
+            */
+          }
+        }
+      }
+      const bitstream_restriction_flag = stream.readBool();
+      if (bitstream_restriction_flag) {
+        const tiles_fixed_structure_flag = stream.readBool()
+        const motion_vectors_over_pic_boundaries_flag = stream.readBool()
+        const restricted_ref_pic_lists_flag = stream.readBool();
+        min_spatial_segmentation_idc = stream.readUEG();
+        const max_bytes_per_pic_denom = stream.readUEG();
+        const max_bits_per_min_cu_denom = stream.readUEG();
+        const log2_max_mv_length_horizontal = stream.readUEG();
+        const log2_max_mv_length_vertical = stream.readUEG();
+      }
+    }
+    const sps_extension_flag = stream.readBool(); // ignore...
+
+    // for meta data
+    const codec_mimetype = `hvc1.${general_profile_idc}.1.L${general_level_idc}.B0`;
+
+    const sub_wc = (chroma_format_idc === 1 || chroma_format_idc === 2) ? 2 : 1;
+    const sub_hc = (chroma_format_idc === 1) ? 2 : 1;
+    const codec_width = pic_width_in_luma_samples - (left_offset + right_offset) * sub_wc;
+    const codec_height = pic_height_in_luma_samples - (top_offset + bottom_offset) * sub_hc;
+    let sar_scale = 1;
+    if (sar_width !== 1 && sar_height !== 1) {
+      sar_scale = sar_width / sar_height;
+    }
+
+    return {
+      profile_idc: general_profile_idc,
+      bit_depth: bit_depth_luma_minus8 + 8,
+      chroma_format: chroma_format_idc,
+
+      general_level_idc,
+      general_profile_space,
+      general_tier_flag,
+      general_profile_idc,
+      general_profile_compatibility_flags_1,
+      general_profile_compatibility_flags_2,
+      general_profile_compatibility_flags_3,
+      general_profile_compatibility_flags_4,
+      general_constraint_indicator_flags_1,
+      general_constraint_indicator_flags_2,
+      general_constraint_indicator_flags_3,
+      general_constraint_indicator_flags_4,
+      general_constraint_indicator_flags_5,
+      general_constraint_indicator_flags_6,
+      min_spatial_segmentation_idc,
+      constant_frame_rate: 0,
+      chroma_format_idc,
+      bit_depth_luma_minus8,
+      bit_depth_chroma_minus8,
+
+      frame_rate: {
+        fixed: fps_fixed,
+        fps: fps_num / fps_den,
+        fps_den: fps_den,
+        fps_num: fps_num,
+      },
+
+      sar_ratio: {
+        width: sar_width,
+        height: sar_height
+      },
+
+      codec_size: {
+        width: codec_width,
+        height: codec_height
+      },
+
+      present_size: {
+        width: codec_width * sar_scale,
+        height: codec_height
+      }
+    };
+  }
+
+  const parsePPS = (data: ArrayBuffer)  => {
+    const rbsp = ebsp2rbsp(data);
+    const stream = new BitStream(rbsp);
+    stream.readBits(16);
+
+    // VPS
+    const pic_parameter_set_id = stream.readUEG();
+    const seq_parameter_set_id = stream.readUEG();
+    const dependent_slice_segments_enabled_flag = stream.readBool();
+    const output_flag_present_flag = stream.readBool();
+    const num_extra_slice_header_bits = stream.readBits(3);
+    const sign_data_hiding_enabled_flag = stream.readBool();
+    const cabac_init_present_flag = stream.readBool();
+    const num_ref_idx_l0_default_active_minus1 = stream.readUEG();
+    const num_ref_idx_l1_default_active_minus1 = stream.readUEG();
+    const init_qp_minus26 = stream.readSEG();
+    const constrained_intra_pred_flag = stream.readBool();
+    const transform_skip_enabled_flag = stream.readBool();
+    const cu_qp_delta_enabled_flag = stream.readBool();
+    if (cu_qp_delta_enabled_flag) {
+      const diff_cu_qp_delta_depth = stream.readUEG();
+    }
+    const cb_qp_offset = stream.readSEG();
+    const cr_qp_offset = stream.readSEG();
+    const pps_slice_chroma_qp_offsets_present_flag = stream.readBool();
+    const weighted_pred_flag = stream.readBool();
+    const weighted_bipred_flag = stream.readBool();
+    const transquant_bypass_enabled_flag = stream.readBool();
+    const tiles_enabled_flag = stream.readBool();
+    const entropy_coding_sync_enabled_flag = stream.readBool();
+    // and more ...
+
+    // needs hvcC
+    let parallelismType = 1; // slice-based parallel decoding
+    if (entropy_coding_sync_enabled_flag && tiles_enabled_flag) {
+      parallelismType = 0; // mixed-type parallel decoding
+    } else if (entropy_coding_sync_enabled_flag) {
+      parallelismType = 3; // wavefront-based parallel decoding
+    } else if (tiles_enabled_flag) {
+      parallelismType = 2; // tile-based parallel decoding
+    }
+
+    return {
+      parallelismType
+    }
+  }
+
+  const {
+    num_temporal_layers,
+    temporal_id_nesting_flag,
+  } = parseVPS(vps);
+
+  const {
+    general_profile_space,
+    general_tier_flag,
+    general_profile_idc,
+    general_profile_compatibility_flags_1,
+    general_profile_compatibility_flags_2,
+    general_profile_compatibility_flags_3,
+    general_profile_compatibility_flags_4,
+    general_constraint_indicator_flags_1,
+    general_constraint_indicator_flags_2,
+    general_constraint_indicator_flags_3,
+    general_constraint_indicator_flags_4,
+    general_constraint_indicator_flags_5,
+    general_constraint_indicator_flags_6,
+    general_level_idc,
+    min_spatial_segmentation_idc,
+    chroma_format_idc,
+    bit_depth_luma_minus8,
+    bit_depth_chroma_minus8,
+    constant_frame_rate,
+    codec_size,
+    present_size,
+  } = parseSPS(sps);
+  const { width: codec_width, height: codec_height } = codec_size;
+  const { width: presentation_width, height: presentation_height } = present_size;
+
+  const {
+    parallelismType
+  } = parsePPS(pps);
+
+  const hvcC = (new Uint8Array([
+    0x01,
+    ((general_profile_space & 0x03) << 6) | ((general_tier_flag ? 1 : 0) << 5) | ((general_profile_idc & 0x1F) << 0),
+    general_profile_compatibility_flags_1,
+    general_profile_compatibility_flags_2,
+    general_profile_compatibility_flags_3,
+    general_profile_compatibility_flags_4,
+    general_constraint_indicator_flags_1,
+    general_constraint_indicator_flags_2,
+    general_constraint_indicator_flags_3,
+    general_constraint_indicator_flags_4,
+    general_constraint_indicator_flags_5,
+    general_constraint_indicator_flags_6,
+    general_level_idc,
+    ((0xF0 | (min_spatial_segmentation_idc & 0x0F00)) >> 8),
+    ((min_spatial_segmentation_idc & 0x00FF) >> 0),
+    (0xFC | (parallelismType & 0x03)),
+    (0xFC | (chroma_format_idc & 0x03)),
+    (0xF8 | (bit_depth_luma_minus8 & 0x07)),
+    (0xF8 | (bit_depth_chroma_minus8 & 0x07)),
+    0x00,
+    0x00,
+    ((constant_frame_rate & 0x03) << 6) | ((num_temporal_layers & 0x07) << 3) | ((temporal_id_nesting_flag ? 1 : 0) << 2) | 3,
+    0x03,
+    0x80 | 32,
+    0x00, 0x01,
+    ((vps.byteLength & 0xFF00) >> 8),
+    ((vps.byteLength & 0x00FF) >> 0),
+    ... (new Uint8Array(vps)),
+    0x80 | 33,
+    0x00, 0x01,
+    ((sps.byteLength & 0xFF00) >> 8),
+    ((sps.byteLength & 0x00FF) >> 0),
+    ... (new Uint8Array(sps)),
+    0x80 | 34,
+    0x00, 0x01,
+    ((pps.byteLength & 0xFF00) >> 8),
+    ((pps.byteLength & 0x00FF) >> 0),
+    ... (new Uint8Array(pps))
+  ]));
+
+  return trak(
+    tkhd(trackId, presentation_width, presentation_height),
+    mdia(
+      mdhd(90000),
+      hdlr('vide'),
+      minf(
+        vmhd(),
+        dinf(),
+        stbl(
+          stsd(
+            hvc1(hvcC, codec_width, codec_height)
+          )
+        )
+      )
+    )
+  )
+}
 const mp4aTrack = (trackId: number, channel_configuration: number, sample_rate: number, config: ArrayBuffer): ArrayBuffer => {
   return trak(
     tkhd(trackId, 0, 0),
@@ -273,7 +812,7 @@ const mp4aTrack = (trackId: number, channel_configuration: number, sample_rate: 
     )
   );
 }
-const mp4aInit = (trackId: number, track: ArrayBuffer):ArrayBuffer => {
+const mp4Init = (trackId: number, track: ArrayBuffer):ArrayBuffer => {
   return concat(
     ftyp(),
     moov(
@@ -354,6 +893,15 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
   private mp4a_timestamps: Map<number, [number, number, [number, number][]]> = new Map<number, [number, number, [number, number][]]>();
   private mp4a_au_counts: Map<number, number> = new Map<number, number>();
   private mp4a_config: ArrayBuffer | null = null;
+
+  private hevc_packet_id: number | null = null;
+  private hevc_timestamps: Map<number, [number, number, [number, number][]]> = new Map<number, [number, number, [number, number][]]>();
+  private hevc_fragments: Map<number, ArrayBuffer[]> = new Map<number, ArrayBuffer[]>();
+  private hevc_au_counts: Map<number, number> = new Map<number, number>();
+  private hevc_sps: ArrayBuffer | null = null;
+  private hevc_pps: ArrayBuffer | null = null;
+  private hevc_vps: ArrayBuffer | null = null;
+  private hevc_config: ArrayBuffer | null = null;
 
   public constructor() {
     super();
@@ -564,6 +1112,9 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
       case this.mp4a_packet_id:
         this.parseMMTMPUMp4a(data, MPU_sequence_number, aggregation_flag, fragment_type, fragmentation_indicator, begin + 8, end);
         break;
+      case this.hevc_packet_id:
+        this.parseMMTMPUHevc(data, MPU_sequence_number, timed_flag, aggregation_flag, fragment_type, fragmentation_indicator, begin + 8, end);
+        break;
       default: break;
     }
   }
@@ -571,7 +1122,6 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
   private parseMMTMPUMp4a(data: ArrayBuffer, sequence_number: number, aggregation_flag: boolean, fragment_type: number, fragmentation_indicator: number, begin: number, end: number) {
     switch(fragment_type) {
       case 0x00: // MPU Metadata
-        this.parseMMTMPUMp4aMPUMetadata(data, begin, end);
         break;
       case 0x01: // MFU Metadata
         break;
@@ -587,8 +1137,8 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
             const sample_offset = view.getUint32(offset, false); offset += 4;
             const priority = view.getUint8(offset); offset += 1;
             const dependency_counter = view.getUint8(offset); offset += 1;
-            this.parseMMTMPUMp4aMFU(data, sequence_number, offset, offset + data_unit_length);
-            offset += data_unit_length;
+            this.parseMMTMPUMp4aMFU(data, sequence_number, offset, offset + (data_unit_length - 14));
+            offset += (data_unit_length - 14);
           }
         } else {
           const movie_fragment_sequence_number = view.getUint32(offset, false); offset += 4;
@@ -605,12 +1155,7 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     }
   }
 
-  private parseMMTMPUMp4aMPUMetadata(data: ArrayBuffer, begin: number, end: number) {
-    // TODO: NEED IMPL
-  }
-
   private parseMMTMPUMp4aMFU(data: ArrayBuffer, sequence_number: number, begin: number, end: number) {
-    // TODO: NEED IMPL
     if (!this.mp4a_timestamps.has(sequence_number)) { return; }
 
     if (Number.isNaN(this.mp4a_timestamps.get(sequence_number))) {
@@ -629,7 +1174,7 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
       this.emitter?.emit(EventTypes.INIT_SEGMENT_RECIEVED, {
         event: EventTypes.INIT_SEGMENT_RECIEVED,
         adaptation_id: this.mp4a_packet_id!,
-        init: mp4aInit(1, mp4aTrack(1, channel_configuration, sampling_frequency, this.mp4a_config))
+        init: mp4Init(1, mp4aTrack(1, channel_configuration, sampling_frequency, this.mp4a_config))
       });
     }
 
@@ -651,22 +1196,12 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
       fragment: concat(moof([1, duration, dts, 0, [[duration, raw.byteLength, false, cts]]]), mdat(raw))
     });
 
-
     if (current_au + 1 >= offsets.length) {
       this.mp4a_timestamps.delete(sequence_number);
       this.mp4a_au_counts.delete(sequence_number);
     } else {
       this.mp4a_au_counts.set(sequence_number, current_au + 1);
     }
-
-    /*
-    for (const [dts_pts_offset, pts_offset] of offsets) {
-      const pts = dts + dts_pts_offset;
-      // TODO: FRAGMENT!
-
-      dts += pts_offset;
-    }
-    */
   }
 
   private parseLoasMp4a(data: ArrayBuffer, begin: number, end: number): LoasAACParseResult | null {
@@ -753,6 +1288,132 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     };
   }
 
+  private parseMMTMPUHevc(data: ArrayBuffer, sequence_number: number, timed_flag: boolean, aggregation_flag: boolean, fragment_type: number, fragmentation_indicator: number, begin: number, end: number) {
+    switch(fragment_type) {
+      case 0x00: // MPU Metadata
+        break;
+      case 0x01: // MFU Metadata
+        break;
+      case 0x02: { // MFU
+        const view = new DataView(data);
+        let offset = begin;
+
+        if (aggregation_flag) {
+          while (offset < end) {
+            const data_unit_length = view.getUint16(offset, false); offset += 2;
+            const movie_fragment_sequence_number = view.getUint32(offset, false); offset += 4;
+            const sample_number = view.getUint32(offset, false); offset += 4;
+            const sample_offset = view.getUint32(offset, false); offset += 4;
+            const priority = view.getUint8(offset); offset += 1;
+            const dependency_counter = view.getUint8(offset); offset += 1;
+            this.parseMMTMPUHevcMFU(data, sequence_number, offset, offset + (data_unit_length - 14));
+            offset = offset + (data_unit_length - 14);
+          }
+        } else {
+          const movie_fragment_sequence_number = view.getUint32(offset, false); offset += 4;
+          const sample_number = view.getUint32(offset, false); offset += 4;
+          const sample_offset = view.getUint32(offset, false); offset += 4;
+          const priority = view.getUint8(offset); offset += 1;
+          const dependency_counter = view.getUint8(offset); offset += 1;
+          if (fragmentation_indicator === 1) {
+            this.hevc_fragments.set(sequence_number, ([] as ArrayBuffer[]).concat(this.hevc_fragments.get(sequence_number) ?? [], [data.slice(offset, end)]));
+          } else if (fragmentation_indicator === 2 && this.hevc_fragments.has(sequence_number)) {
+            this.hevc_fragments.set(sequence_number, ([] as ArrayBuffer[]).concat(this.hevc_fragments.get(sequence_number) ?? [], [data.slice(offset, end)]));
+          } else if (fragmentation_indicator === 3 && this.hevc_fragments.has(sequence_number)) {
+            const payload = concat(... this.hevc_fragments.get(sequence_number) ?? [], data.slice(offset, end));
+            this.parseMMTMPUHevcMFU(payload, sequence_number, 0, payload.byteLength);
+            this.hevc_fragments.delete(sequence_number);
+          } else if (fragmentation_indicator === 0) {
+            this.parseMMTMPUHevcMFU(data, sequence_number, begin, end);
+          }
+        }
+
+        break;
+      }
+      default: break;
+    }
+  }
+
+  private parseMMTMPUHevcMFU(data: ArrayBuffer, sequence_number: number, begin: number, end: number) {
+    if (sequence_number > 2199865) { return; }
+    if (!this.hevc_timestamps.has(sequence_number)) { return; }
+
+    if (Number.isNaN(this.hevc_timestamps.get(sequence_number))) {
+      this.hevc_timestamps.delete(sequence_number);
+      return;
+    }
+
+    const view = new DataView(data);
+    const nal_unit_type = (view.getUint8(begin + 4) >> 1) & 0x3f;
+
+    if (0x20 <= nal_unit_type && nal_unit_type <= 0x22) {
+      switch (nal_unit_type) {
+        case 0x20:
+          this.hevc_vps = data.slice(begin + 4, end);
+          break;
+        case 0x21:
+          this.hevc_sps = data.slice(begin + 4, end);
+          break;
+        case 0x22:
+          this.hevc_pps = data.slice(begin + 4, end);
+          break;
+      }
+
+      if (this.hevc_vps != null && this.hevc_sps != null && this.hevc_pps != null && this.hevc_config == null) {
+        this.hevc_config = new ArrayBuffer(0); // TODO: hvcC
+
+        this.emitter?.emit(EventTypes.INIT_SEGMENT_RECIEVED, {
+          event: EventTypes.INIT_SEGMENT_RECIEVED,
+          adaptation_id: this.hevc_packet_id!,
+          init: mp4Init(1, hevcTrack(1, this.hevc_vps, this.hevc_sps, this.hevc_pps)),
+        });
+      }
+
+      return;
+    }
+
+    if (this.hevc_config == null) {
+      return;
+    }
+
+    // Require VCL NAL
+    if (nal_unit_type >= 32) {
+      return;
+    }
+
+    const [mpu_presentation_time, mpu_decoding_time_offset, offsets] = this.hevc_timestamps.get(sequence_number)!;
+    const current_au = this.hevc_au_counts.get(sequence_number) ?? 0;
+    const keyframe = nal_unit_type === 19 || nal_unit_type === 20 || nal_unit_type === 21;
+    let dts = mpu_presentation_time + mpu_decoding_time_offset;
+    let cts = 0;
+    let duration = 0;
+    for (let i = 0; i <= current_au; i++) {
+      const [dts_pts_offset, pts_offset] = offsets[i];
+      cts = dts_pts_offset;
+      duration = pts_offset;
+      if (i < current_au) { dts += pts_offset; }
+    }
+    dts = Math.floor(dts);
+    cts = Math.floor(cts);
+    duration = Math.ceil(duration)
+
+    const raw = data.slice(begin, end);
+
+    this.emitter?.emit(EventTypes.FRAGMENT_RECIEVED, {
+      event: EventTypes.FRAGMENT_RECIEVED,
+      adaptation_id: this.hevc_packet_id!,
+      emsg: [],
+      fragment: concat(moof([1, duration, dts, 0, [[duration, raw.byteLength, keyframe, cts]]]), mdat(raw))
+    });
+
+    if (current_au + 1 >= offsets.length) {
+      this.hevc_timestamps.delete(sequence_number);
+      this.hevc_au_counts.delete(sequence_number);
+    } else {
+      this.hevc_au_counts.set(sequence_number, current_au + 1);
+    }
+  }
+
   private parseMMTSIMessage(data: ArrayBuffer, extension_flag: boolean, begin: number, end: number) {
     const view = new DataView(data);
 
@@ -836,6 +1497,7 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
                 break;
               case 'hev1':
               case 'hvc1':
+                this.hevc_packet_id = packet_id
                 break;
             }
             break;
@@ -880,6 +1542,14 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
                     this.mp4a_timestamps.set(mpu_sequence_number, [mpu_presentation_time_90khz, 0, []]);
                   }
                   break;
+                case 'hev1':
+                case 'hvc1':
+                  if (this.hevc_timestamps.has(mpu_sequence_number)) {
+                    this.hevc_timestamps.get(mpu_sequence_number)![0] = mpu_presentation_time_90khz;
+                  } else {
+                    this.hevc_timestamps.set(mpu_sequence_number, [mpu_presentation_time_90khz, 0, []]);
+                  }
+                  break;
               }
             }
             break;
@@ -911,6 +1581,15 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
                     this.mp4a_timestamps.get(mpu_sequence_number)![2] = offsets;
                   } else {
                     this.mp4a_timestamps.set(mpu_sequence_number, [Number.NaN, mpu_decoding_time_offset / timescale * TIMESCALE, offsets]);
+                  }
+                  break;
+                case 'hev1':
+                case 'hvc1':
+                  if (this.hevc_timestamps.has(mpu_sequence_number)) {
+                    this.hevc_timestamps.get(mpu_sequence_number)![1] = mpu_decoding_time_offset / timescale * TIMESCALE;
+                    this.hevc_timestamps.get(mpu_sequence_number)![2] = offsets;
+                  } else {
+                    this.hevc_timestamps.set(mpu_sequence_number, [Number.NaN, mpu_decoding_time_offset / timescale * TIMESCALE, offsets]);
                   }
                   break;
               }

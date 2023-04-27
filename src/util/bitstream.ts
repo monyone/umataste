@@ -57,6 +57,38 @@ export class BitStream {
     return this.readBits(1) === 1;
   }
 
+  private top(): number {
+    if (this.empty()) {
+      throw new Error('test')
+      return 0;
+    }
+    if (this.bits.length === 0) { this.fill(); }
+    return this.bits[0]
+  }
+
+  private count_trailing_zeros() {
+    let result = 0;
+    while (this.top() == 0) {
+      this.readBits(1)
+      result += 1
+    }
+    return result
+  }
+
+  public readUEG() {
+    const count = this.count_trailing_zeros()
+    return this.readBits(count + 1) - 1
+  }
+
+  public readSEG() {
+    const ueg = this.readUEG()
+    if ((ueg % 2) == 1) {
+      return (ueg + 1) >> 1
+    } else {
+      return -1 * (ueg >> 1)
+    }
+  }
+
   public byteAlign() {
     this.skipBits(this.bitLength() % 8);
     return;
