@@ -1334,7 +1334,6 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
   }
 
   private parseMMTMPUHevcMFU(data: ArrayBuffer, sequence_number: number, begin: number, end: number) {
-    if (sequence_number > 2199865) { return; }
     if (!this.hevc_timestamps.has(sequence_number)) { return; }
 
     if (Number.isNaN(this.hevc_timestamps.get(sequence_number))) {

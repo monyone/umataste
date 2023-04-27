@@ -59,8 +59,7 @@ export class BitStream {
 
   private top(): number {
     if (this.empty()) {
-      throw new Error('test')
-      return 0;
+      throw new Error('BitStream is Empty!')
     }
     if (this.bits.length === 0) { this.fill(); }
     return this.bits[0]
