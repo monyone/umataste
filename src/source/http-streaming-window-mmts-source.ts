@@ -360,10 +360,10 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
     const pic_height_in_luma_samples = stream.readUEG();
     const conformance_window_flag = stream.readBool();
     if (conformance_window_flag) {
-        left_offset += stream.readUEG();
-        right_offset += stream.readUEG();
-        top_offset += stream.readUEG();
-        bottom_offset += stream.readUEG();
+      left_offset += stream.readUEG();
+      right_offset += stream.readUEG();
+      top_offset += stream.readUEG();
+      bottom_offset += stream.readUEG();
     }
     const bit_depth_luma_minus8 = stream.readUEG();
     const bit_depth_chroma_minus8 = stream.readUEG();
@@ -402,7 +402,8 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
     const sample_adaptive_offset_enabled_flag = stream.readBool();
     const pcm_enabled_flag = stream.readBool();
     if (pcm_enabled_flag) {
-        stream.readBits(8);
+        stream.readBits(4);
+        stream.readBits(4);
         stream.readUEG();
         stream.readUEG();
         stream.readBool();
@@ -446,7 +447,7 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
     if (long_term_ref_pics_present_flag) {
       const num_long_term_ref_pics_sps = stream.readUEG();
       for (let i = 0; i < num_long_term_ref_pics_sps; i++) {
-        for (let j = 0; j < (log2_max_pic_order_cnt_lsb_minus4 + 4); j++) { stream.readBits(1); }
+        stream.readBits(log2_max_pic_order_cnt_lsb_minus4 + 4);
         stream.readBits(1);
       }
     }
@@ -522,7 +523,7 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
           if (commonInfPresentFlag) {
             nal_hrd_parameters_present_flag = stream.readBool();
             vcl_hrd_parameters_present_flag = stream.readBool();
-            if( nal_hrd_parameters_present_flag || vcl_hrd_parameters_present_flag ){
+            if (nal_hrd_parameters_present_flag || vcl_hrd_parameters_present_flag){
               sub_pic_hrd_params_present_flag = stream.readBool();
               if (sub_pic_hrd_params_present_flag) {
                 stream.readBits(8);
@@ -543,28 +544,27 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
           for (let i = 0; i <= max_sub_layers_minus1; i++) {
             let fixed_pic_rate_general_flag = stream.readBool();
             fps_fixed = fixed_pic_rate_general_flag;
-            let fixed_pic_rate_within_cvs_flag = false;
+            let fixed_pic_rate_within_cvs_flag = true;
             let cpbCnt = 1;
             if (!fixed_pic_rate_general_flag) {
               fixed_pic_rate_within_cvs_flag = stream.readBool();
             }
             let low_delay_hrd_flag = false;
             if (fixed_pic_rate_within_cvs_flag) {
-              stream.readSEG();
+              stream.readUEG();
             } else {
               low_delay_hrd_flag = stream.readBool();
             }
             if (!low_delay_hrd_flag) {
               cpbCnt = stream.readUEG() + 1;
             }
-            // TODO: cpbCnt buggy
-            /*
             if (nal_hrd_parameters_present_flag) {
               for (let j = 0; j < cpbCnt; j++) {
                 stream.readUEG(); stream.readUEG();
                 if (sub_pic_hrd_params_present_flag) {
                   stream.readUEG(); stream.readUEG();
                 }
+                stream.readBool();
               }
             }
             if (vcl_hrd_parameters_present_flag) {
@@ -573,9 +573,9 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
                 if (sub_pic_hrd_params_present_flag) {
                   stream.readUEG(); stream.readUEG();
                 }
+                stream.readBool();
               }
             }
-            */
           }
         }
       }
@@ -995,7 +995,6 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
       case 0x01:
         this.parseTLVIPv4(data, begin, end);
       case 0x02:
-        // TODO: NEED PARSE!
         this.parseTLVIPv6(data, begin, end);
         break;
       case 0x03:
