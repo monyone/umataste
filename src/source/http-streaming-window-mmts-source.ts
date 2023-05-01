@@ -750,7 +750,7 @@ const hevcTrack = (trackId: number, vps: ArrayBuffer, sps: ArrayBuffer, pps: Arr
     general_constraint_indicator_flags_5,
     general_constraint_indicator_flags_6,
     general_level_idc,
-    ((0xF0 | (min_spatial_segmentation_idc & 0x0F00)) >> 8),
+    (0xF0 | ((min_spatial_segmentation_idc & 0x0F00) >> 8)),
     ((min_spatial_segmentation_idc & 0x00FF) >> 0),
     (0xFC | (parallelismType & 0x03)),
     (0xFC | (chroma_format_idc & 0x03)),
@@ -994,11 +994,12 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     switch(packet_type) {
       case 0x01:
         this.parseTLVIPv4(data, begin, end);
+        break;
       case 0x02:
         this.parseTLVIPv6(data, begin, end);
         break;
       case 0x03:
-        this.praseTLVCompressed(data, begin, end);
+        this.parseTLVCompressed(data, begin, end);
         break;
       default:
         break;
@@ -1013,7 +1014,7 @@ export default class HTTPStreamingWindowMMTSSource extends Source {
     // TODO: NEED IMPL!
   }
 
-  private praseTLVCompressed(data: ArrayBuffer, begin: number, end: number): void {
+  private parseTLVCompressed(data: ArrayBuffer, begin: number, end: number): void {
     const view = new DataView(data);
 
     const CID = (view.getUint16(begin + 0, false) & 0xFFF0) >> 4;
